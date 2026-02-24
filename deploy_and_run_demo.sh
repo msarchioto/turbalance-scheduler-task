@@ -124,8 +124,11 @@ echo ""
 echo "========================================"
 echo "  Node Resource Summary"
 echo "========================================"
-kubectl top nodes 2>/dev/null || kubectl describe nodes | grep -A 5 "Allocated resources" || true
-echo ""
+for node in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+    echo "--- $node ---"
+    kubectl describe node "$node" | grep -A 6 "Allocated resources"
+    echo ""
+done
 
 echo "========================================"
 echo "  Custom Scheduler Logs"

@@ -59,6 +59,37 @@ Final state: node1 = 1200 Mi, node2 = 800 Mi. Memory is spread across both
 nodes, reducing the chance that either one becomes overcommitted and starts
 killing pods.
 
+### Scheduler Patch 1: Solve race condition
+
+The initial implementation had a race condition in the watch loop. The
+Kubernetes watch stream can emit multiple events for the same pod (ADDED,
+MODIFIED, etc.) while it is still in `Pending` phase. Because the scheduler
+processed every matching event independently, it attempted to bind the same pod
+multiple times. The first binding succeeded, but subsequent attempts hit a
+conflict error:
+
+```
+2026-02-24 18:27:37,013 INFO Assigning pod pod1 with memory request 629145600.0:
+2026-02-24 18:27:37,013 INFO Optimal node for pod pod1: minikube
+2026-02-24 18:27:37,114 INFO Assigning pod pod1 with memory request 629145600.0:
+2026-02-24 18:27:37,114 INFO Optimal node for pod pod1: minikube-m02
+2026-02-24 18:27:37,116 INFO Operation cannot be fulfilled on pods/binding "pod1": pod pod1 is already assigned to node "minikube"
+2026-02-24 18:27:37,126 INFO Assigning pod pod1 with memory request 629145600.0:
+2026-02-24 18:27:37,126 INFO Optimal node for pod pod1: minikube-m02
+2026-02-24 18:27:37,128 INFO Operation cannot be fulfilled on pods/binding "pod1": pod pod1 is already assigned to node "minikube"
+```
+
+The same pattern repeated for every pod (pod2, pod3). The duplicate attempts
+are harmless (the API server rejects them) but they add unnecessary API calls
+and. More importantly, the second attempt can compute a *different* optimal
+node than the one that actually won the race — making the logs confusing.
+
+**Fix:** A `scheduled_pods: set[str]` is maintained in the watch loop. Once a
+pod is successfully bound, its name is added to the set and all future events
+for that pod are skipped before any scheduling logic runs.
+
+**IMPORTANT NOTE**: This set grows unboundedly. If pods are frequently created/deleted over a long scheduler lifetime, we may want to evict entries when a pod leaves Pending (e.g., on DELETED events or when phase changes to Running/Succeeded/Failed). For short-lived or test schedulers this is fine as-is.
+
 ## Kubernetes Manifests
 
 ### `src/k8s/scheduler-rbac.yaml`

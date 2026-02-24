@@ -140,26 +140,32 @@ def load_balancing_assignment(pod: V1Pod, nodes: list[V1Node]) -> V1Node | None:
 # Main loop, long-living process that runs until stopped
 def main():
     """Watch for Pending pods and assign them to the least-loaded node."""
-    # Watch stream
     w = watch.Watch()
-    # Stream pod events; blocks until a new event arrives
+    # PATCH: Solve race condition
+    # Note: This set (scheduled_pods) grows unboundedly. If pods are frequently
+    # created/deleted over a long scheduler lifetime, you may want to evict
+    # entries when a pod leaves Pending (e.g., on DELETED events or when phase
+    # changes to Running/Succeeded/Failed). For short-lived or test schedulers
+    # this is fine as-is.
+    scheduled_pods: set[str] = set()
     for event in w.stream(k8s_client.list_namespaced_pod, "default"):
+        pod = event["object"]
         if (
-            event["object"].status.phase == "Pending"
-            and event["object"].spec.scheduler_name == scheduler_name
+            pod.status.phase == "Pending"
+            and pod.spec.scheduler_name == scheduler_name
+            and pod.metadata.name not in scheduled_pods
         ):
-            # If the pod is Pending and has the correct scheduler name, try to assign it (pin) to a node
             try:
-                pod = event["object"]
                 optimal_node = load_balancing_assignment(pod, available_nodes())
                 pod_name = pod.metadata.name
                 if optimal_node is None:
                     logger.info(
                         f"No available nodes for pod {pod_name}, skipping binding.",
                     )
-                    continue  # Skip binding and go to the next event
+                    continue
                 node_name = optimal_node.metadata.name
                 bind_pod_to_node(pod_name, node_name)
+                scheduled_pods.add(pod_name)
             except client.ApiException as e:
                 logger.info(json.loads(e.body)["message"])
 
