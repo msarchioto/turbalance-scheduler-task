@@ -90,6 +90,47 @@ for that pod are skipped before any scheduling logic runs.
 
 **IMPORTANT NOTE**: This set grows unboundedly. If pods are frequently created/deleted over a long scheduler lifetime, we may want to evict entries when a pod leaves Pending (e.g., on DELETED events or when phase changes to Running/Succeeded/Failed). For short-lived or test schedulers this is fine as-is.
 
+### Scheduler Patch 2: `get_nodes_requested_memory()` performance
+
+The original `get_nodes_requested_memory()` called
+`k8s_client.list_namespaced_pod("default")` on **every scheduling decision**,
+iterating over all pods in the namespace to sum their memory requests per node.
+This is an O(n) API round-trip plus O(n) iteration each time, where n is the
+total number of pods. As the cluster grows, this becomes a bottleneck: each
+scheduling decision pays the full cost of listing and scanning every pod, even
+though the vast majority of pod states have not changed since the last call.
+
+**Fix:** Replace the per-call API list with **incremental, event-driven
+tracking**. Two module-level structures maintain the state:
+
+- `_node_memory: DefaultDict[str, float]` — running total of requested memory
+  per node.
+- `_pod_assignments: dict[str, tuple[str, float]]` — maps each pod UID to its
+  assigned node and memory request, so the old value can be subtracted when a
+  pod moves or is deleted.
+
+A new helper, `_update_pod_tracking(event)`, is called for **every** watch
+event in the main loop (not just Pending pods). It subtracts the previous
+assignment (if any), then, for non-DELETED pods that have a `node_name`, adds
+the current assignment. This keeps `_node_memory` accurate at all times with
+O(1) work per event.
+
+`get_nodes_requested_memory()` now returns a **shallow copy**
+(`defaultdict(float, _node_memory)`) instead of making an API call, reducing
+the scheduling hot path from O(n) API + iteration to an O(k) dict copy
+(k = number of nodes, typically very small). The copy is necessary for two
+reasons:
+(1) `defaultdict` auto-creates missing keys on read. For example, if only
+`node1` has pods, `_node_memory` is `{"node1": 600.0}`. When
+`load_balancing_assignment` reads `_node_memory["node2"]`, the `defaultdict`
+returns `0.0` **and inserts** `"node2": 0.0` into the dict as a side effect.
+After iterating all nodes, `_node_memory` would be littered with zero-valued
+entries that `_update_pod_tracking` never created. The copy absorbs these
+insertions instead
+(2) the copy provides snapshot isolation, guaranteeing
+that the values the caller iterates over cannot shift mid-loop if the design
+ever moves to async or threaded event processing.
+
 ## Kubernetes Manifests
 
 ### `src/k8s/scheduler-rbac.yaml`

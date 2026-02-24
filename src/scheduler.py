@@ -78,20 +78,31 @@ def pod_memory_request(pod: V1Pod) -> float:
     )
 
 
+# In-memory node memory accounting, updated incrementally via the watch stream
+# instead of re-listing all pods on every scheduling decision.
+_node_memory: DefaultDict[str, float] = defaultdict(float)
+_pod_assignments: dict[str, tuple[str, float]] = {}  # pod uid -> (node_name, bytes)
+
+
+def _update_pod_tracking(event: dict) -> None:
+    """Incrementally update per-node memory totals from a single watch event."""
+    event_type = event["type"]
+    pod: V1Pod = event["object"]
+    uid = pod.metadata.uid
+
+    prev = _pod_assignments.pop(uid, None)
+    if prev:
+        _node_memory[prev[0]] -= prev[1]
+
+    if event_type != "DELETED" and pod.spec.node_name:
+        mem = pod_memory_request(pod)
+        _pod_assignments[uid] = (pod.spec.node_name, mem)
+        _node_memory[pod.spec.node_name] += mem
+
+
 def get_nodes_requested_memory() -> DefaultDict[str, float]:
-    """Tally total requested memory per node from all scheduled pods."""
-    pods = k8s_client.list_namespaced_pod("default").items
-    requested_memory_per_node = defaultdict(float)
-    # Iterate over all pods and sum up the memory requests for each node
-    for pod in pods:
-        # Skip pods that are not bound to a node
-        if not pod.spec.node_name:
-            continue
-        # Get the node name
-        node = pod.spec.node_name
-        # Add the memory request to the node's total requested memory
-        requested_memory_per_node[node] += pod_memory_request(pod)
-    return requested_memory_per_node
+    """Return current in-memory snapshot of requested memory per node."""
+    return defaultdict(float, _node_memory)
 
 
 def get_node_available_memory_bytes() -> float:
@@ -112,7 +123,7 @@ def get_node_available_memory_bytes() -> float:
 def load_balancing_assignment(pod: V1Pod, nodes: list[V1Node]) -> V1Node | None:
     """Pick the node with the lowest memory usage that can still fit the pod."""
     memory_request = pod_memory_request(pod)
-    requested_memory_per_node = get_nodes_requested_memory()  # slow!!!
+    requested_memory_per_node = get_nodes_requested_memory()
     pod_name = pod.metadata.name
     logger.info(f"Assigning pod {pod_name} with memory request {memory_request}:")
     optimal_node = None
@@ -149,6 +160,7 @@ def main():
     # this is fine as-is.
     scheduled_pods: set[str] = set()
     for event in w.stream(k8s_client.list_namespaced_pod, "default"):
+        _update_pod_tracking(event)
         pod = event["object"]
         if (
             pod.status.phase == "Pending"
