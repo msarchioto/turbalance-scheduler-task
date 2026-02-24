@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod3
+  labels:
+    app: test-app
+    workload-type: memory-intense
+spec:
+  schedulerName: custom-scheduler
+  containers:
+  - name: busybox
+    image: busybox
+    command: ['sh', '-c', 'echo Hello Kubernetes! && sleep 3600']
+    resources:
+      requests:
+        memory: "600Mi"
+      limits:
+        memory: "1200Mi"
