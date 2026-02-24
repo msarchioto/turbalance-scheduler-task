@@ -9,6 +9,7 @@ memory requests, minimizing the risk of OOM-killed pods.
 .
 ├── Dockerfile
 ├── deploy_and_run_demo.sh
+├── deploy_and_run_demo.log
 ├── README.md
 └── src/
     ├── scheduler.py
@@ -191,6 +192,11 @@ The image is built locally and then loaded into minikube via
 `minikube image load`, which distributes it to all nodes in the cluster.
 This approach is compatible with multi-node minikube clusters (unlike
 `minikube docker-env`, which only works with single-node setups).
+
+## `deploy_and_run_demo.log`
+
+Full execution log of `deploy_and_run_demo.sh`, captured from a successful run
+against a two-node minikube cluster.
 
 ## `deploy_and_run_demo.sh`
 
