@@ -3,6 +3,25 @@
 A custom Kubernetes scheduler that balances pod placement across nodes based on
 memory requests, minimizing the risk of OOM-killed pods.
 
+Google Slides Presentation: [link](https://docs.google.com/presentation/d/1fN2kMt4K23wxD2zZY2ZXGUbH5dPRP0zBFsd4uw6Hbm4/edit?usp=sharing)
+
+## Table of Contents
+
+- [Repository Structure](#repository-structure)
+- [How the Scheduler Works](#how-the-scheduler-works)
+  - [Expected Placement (2 nodes, 2048 Mi each)](#expected-placement-2-nodes-2048-mi-each)
+  - [Scheduler Patch 1: Solve race condition](#scheduler-patch-1-solve-race-condition)
+  - [Scheduler Patch 2: `get_nodes_requested_memory()` performance](#scheduler-patch-2-get_nodes_requested_memory-performance)
+- [Kubernetes Manifests](#kubernetes-manifests)
+  - [`src/k8s/scheduler-rbac.yaml`](#srck8sscheduler-rbacyaml)
+  - [`src/k8s/scheduler-deployment.yaml`](#srck8sscheduler-deploymentyaml)
+- [Dockerfile](#dockerfile)
+- [All-in-one Demo Script](#all-in-one-demo-script)
+  - [Step-by-step breakdown](#step-by-step-breakdown)
+- [Prerequisites](#prerequisites)
+- [Running](#running)
+- [`deploy_and_run_demo.log`](#deploy_and_run_demolog)
+
 ## Repository Structure
 
 ```
@@ -193,14 +212,12 @@ The image is built locally and then loaded into minikube via
 This approach is compatible with multi-node minikube clusters (unlike
 `minikube docker-env`, which only works with single-node setups).
 
-## `deploy_and_run_demo.log`
 
-Full execution log of `deploy_and_run_demo.sh`, captured from a successful run
-against a two-node minikube cluster.
+## All-in-one Demo Script 
 
-## `deploy_and_run_demo.sh`
+`deploy_and_run_demo.sh`
 
-An all-in-one shell script that sets up the cluster, deploys everything, and
+An all-in-one demo shell script that sets up the minikube cluster, deploys everything, and
 verifies the result. It requires a working `minikube` and `docker` installation
 already present in the environment. It uses `set -euo pipefail` so any failure
 aborts the script immediately.
@@ -232,3 +249,8 @@ aborts the script immediately.
 The script takes roughly 2-3 minutes (mostly minikube startup). When it
 finishes, look at the "Pod Placement" and "Custom Scheduler Logs" sections in
 the output to verify that the scheduler placed each pod as expected.
+
+## `deploy_and_run_demo.log`
+
+Full execution log of `deploy_and_run_demo.sh`, captured from a successful run
+against a two-node minikube cluster.
