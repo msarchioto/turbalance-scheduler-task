@@ -130,10 +130,34 @@ tracking**. Two module-level structures maintain the state:
   pod moves or is deleted.
 
 A new helper, `_update_pod_tracking(event)`, is called for **every** watch
-event in the main loop (not just Pending pods). It subtracts the previous
-assignment (if any), then, for non-DELETED pods that have a `node_name`, adds
-the current assignment. This keeps `_node_memory` accurate at all times with
-O(1) work per event.
+event in the main loop (not just Pending pods). It uses a **pop-then-insert**
+pattern that handles all event types (ADDED, MODIFIED, DELETED) uniformly
+without special-casing:
+
+1. **Remove old** — pop the pod's previous `(node, bytes)` entry and subtract
+   the bytes from the node's running total. Harmless no-op for first-time pods.
+2. **Add new** — if the pod is not DELETED and has a `node_name`, compute its
+   memory request, record the assignment, and add the bytes to the node total.
+
+This keeps `_node_memory` accurate at all times with O(1) work per event.
+
+**Worked example:**
+
+```
+State: _node_memory = {node-A: 512Mi}, _pod_assignments = {uid-1: (node-A, 512Mi)}
+
+Event: MODIFIED — uid-1 moved to node-B, requests 256Mi
+  1. pop uid-1 → (node-A, 512Mi);  node-A: 512-512 = 0
+  2. insert uid-1 → (node-B, 256Mi); node-B: 0+256 = 256Mi
+
+Event: DELETED — uid-1
+  1. pop uid-1 → (node-B, 256Mi);  node-B: 256-256 = 0
+  2. skip (DELETED)
+
+Event: ADDED — uid-2 on node-A, requests 1Gi
+  1. pop uid-2 → None (first time, no-op)
+  2. insert uid-2 → (node-A, 1Gi);  node-A: 0+1Gi = 1Gi
+```
 
 `get_nodes_requested_memory()` now returns a **shallow copy**
 (`defaultdict(float, _node_memory)`) instead of making an API call, reducing

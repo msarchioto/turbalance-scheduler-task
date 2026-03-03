@@ -85,15 +85,26 @@ _pod_assignments: dict[str, tuple[str, float]] = {}  # pod uid -> (node_name, by
 
 
 def _update_pod_tracking(event: dict) -> None:
-    """Incrementally update per-node memory totals from a single watch event."""
+    """Incrementally update per-node memory totals from a single watch event.
+
+    Uses a pop-then-insert pattern that handles ADDED, MODIFIED, and DELETED
+    events uniformly without special-casing:
+      1. Remove the pod's previous accounting (if any).
+      2. If the pod still exists and is assigned, record the new accounting.
+    """
     event_type = event["type"]
     pod: V1Pod = event["object"]
     uid = pod.metadata.uid
 
+    # Step 1: Undo previous accounting — subtract the old memory from the old
+    # node so that moves, updates, and deletions all start from a clean slate.
     prev = _pod_assignments.pop(uid, None)
     if prev:
         _node_memory[prev[0]] -= prev[1]
 
+    # Step 2: Record new accounting — only for pods that still exist (not
+    # DELETED) and have been assigned to a node (node_name is set by the
+    # kubelet after binding).
     if event_type != "DELETED" and pod.spec.node_name:
         mem = pod_memory_request(pod)
         _pod_assignments[uid] = (pod.spec.node_name, mem)
